@@ -14,8 +14,115 @@ import scipy.ndimage
 # Para a interface gráfica
 import customtkinter as ctk 
 
-# Espaço para as funções:
+# ============================= Espaço para as funções: =============================
+# Funções auxiliares:
+# Modifica o intervalo da imagem
+def norm_minmax(image_array:  np.ndarray, 
+                scale_factor: float = 255, 
+                offset_value: float = 0):  
+    image_array = (image_array - image_array.min()) / (image_array.max() - image_array.min())
+    image_array *= scale_factor # Transforma o intervalo [0,1] em [0,255] (controla a amplitude)
+    image_array -= offset_value # Transforma o intervalo [0,1] em [-1,1] (controla o ponto de partida)
+    return image_array
 
+# Verifica se a imagem é RGBA
+def is_rgba(img: np.ndarray):
+    if img.ndim == 3: # Verifica se não é cinza
+        if img.shape[2] == 4: # E se possui 4 canais
+            return True
+    return False
+
+# -----------------------------------------------------------------------------------
+
+# Funções de I/O:
+# Carrega e trata (se necessário) a imagem escolhida
+def load_image(path: str) -> np.ndarray:
+    try:
+        img = iio.imread(path)
+    except Exception as e:
+        raise ValueError(f"Erro ao ler a imagem '{path}': {e}") from e
+
+    # Simplifica Imagens RGBA para RGB (caso aplicável)
+    if is_rgba(img):
+        img = img[:, :, :3] # Mantém apenas os 3 primeiros canais (descarta o Alpha)
+    
+    return img
+
+# Trata (se necessário) e salva a imagem escolhida
+def save_image(img: np.ndarray, path: str):
+    img_to_save = norm_minmax(img) # Define o intervalo correto [0,255]
+    img_to_save = img_to_save.astype(np.uint8) # Converte para o formato esperado
+
+    try:
+        iio.imwrite(path, img_to_save)
+        print(f"Imagem salva com sucesso!\nImagem salva em: {path}")
+    except Exception as e:
+        print(f"Erro ao salvar a imagem: {e}")
+
+# -----------------------------------------------------------------------------------
+
+# Funções de transformação de intensidade
+#
+def f_inv(light):
+    return 255-light
+
+#
+def f_log(light):
+    img = np.log(light.astype(float)+1)
+    img = img * 255/np.log(255+1)
+    return img.astype(np.uint8)
+
+#
+def f_gamma(light, gamma=2.2):
+    img = light.astype(float)**(1/gamma)
+    img = img * 255/(255**(1/gamma))
+    return img.astype(np.uint8)
+
+#
+def f_mod(light, a=30, b=200, c=0, d=255):
+    return np.clip((light.astype(float)-a)*((d-c)/(b-a)) + c, 0, 255).astype(np.uint8)
+
+#
+def f_solarize(light):
+    """
+    Função Criativa: Solarização (Efeito Sabattier).
+    Aplica uma transformação parabólica que inverte tons claros e escuros 
+    em relação ao ponto médio.
+    """
+    # Convertemos para float para evitar estouro (overflow) durante a multiplicação
+    v = light.astype(float)
+    
+    # Aplicamos a parábola: 4/255 * r * (255 - r)
+    # Isso garante que o valor máximo (255) ocorra no input 127.5
+    res = (4 / 255.0) * v * (255.0 - v)
+    
+    # Retornamos como uint8 (inteiros de 0 a 255)
+    return res.astype(np.uint8)
+
+# -----------------------------------------------------------------------------------
+# Funções de transformação geométrica
+#
+def interp(img, i_cont, j_cont):
+
+    i0 = np.floor(i_cont).astype(int)
+    i1 = i0 + 1 if i0 < img.shape[0]-1 else i0
+    j0 = np.floor(j_cont).astype(int)
+    j1 = j0 + 1 if j0 < img.shape[1]-1 else j0
+
+    c0 = img[i0, j0]
+    c1 = img[i0, j1]
+    c2 = img[i1, j0]
+    c3 = img[i1, j1]
+
+    t = i_cont - i0
+    s = j_cont - j0
+
+    c01 = c0*(1 - s) + c1*s
+    c23 = c2*(1 - s) + c3*s
+    c = c01*(1 - t) + c23*t
+    return c
+
+#
 def apply_geometric_transform(img, matrix):
     """
     Função genérica para aplicar transformações geométricas usando mapeamento inverso.
@@ -44,23 +151,7 @@ def apply_geometric_transform(img, matrix):
                 
     return new_img
 
-def f_solarize(light):
-    """
-    Função Criativa: Solarização (Efeito Sabattier).
-    Aplica uma transformação parabólica que inverte tons claros e escuros 
-    em relação ao ponto médio.
-    """
-    # Convertemos para float para evitar estouro (overflow) durante a multiplicação
-    v = light.astype(float)
-    
-    # Aplicamos a parábola: 4/255 * r * (255 - r)
-    # Isso garante que o valor máximo (255) ocorra no input 127.5
-    res = (4 / 255.0) * v * (255.0 - v)
-    
-    # Retornamos como uint8 (inteiros de 0 a 255)
-    return res.astype(np.uint8)
-
-# Fim do espaço das funções
+# ============================= Fim do espaço das funções =============================
 
 # --- CLASSE DA INTERFACE ---
 class ImageEditor(ctk.CTk):

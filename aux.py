@@ -13,21 +13,11 @@ def _paint(img, cur_p, nb, bg, fg):
 
     return
 
-def f_inv(light):
-    return 255-light
 
-def f_mod(light, a=30, b=200, c=0, d=255):
-    return np.clip((light.astype(float)-a)*((d-c)/(b-a)) + c, 0, 255).astype(np.uint8)
 
-def f_log(light):
-    img = np.log(light.astype(float)+1)
-    img = img * 255/np.log(255+1)
-    return img.astype(np.uint8)
 
-def f_gamma(light, gamma=2.2):
-    img = light.astype(float)**(1/gamma)
-    img = img * 255/(255**(1/gamma))
-    return img.astype(np.uint8)
+
+
 
 # função de luminosidade para converter imagens coloridas para preto&branco
 def luminosity(img):
@@ -91,12 +81,7 @@ def f_gamma(v, gamma):
 def luminosity(img):
     return (0.21*img[..., 0] + 0.72*img[..., 1] + 0.07*img[..., 2]).astype(np.uint8)
 
-# normalização min-max para sempre deixar imagens em [0-255]
-def norm_minmax(img, C, m):
-    img = (img - img.min())/(img.max() - img.min())
-    img *= C
-    img -= m
-    return img
+
 
 def conv_op(i, j, img, kernel):
 
@@ -134,35 +119,12 @@ def convolve(img, kernel):
 def cont_fun_sin(x, y, freq=10):
     return np.sin(2*np.pi*x*freq) + np.sin(2*np.pi*y*freq)
 
-def norm_minmax(img):
-    img = (img - img.min())/(img.max() - img.min())
-    img *= 255
-    return img.astype(np.uint8)
-
 def quantization(img, B):
     img = img >> 8 - B
     img = img << 8 - B
     return img
 
-def interp(img, i_cont, j_cont):
 
-    i0 = np.floor(i_cont).astype(int)
-    i1 = i0 + 1 if i0 < img.shape[0]-1 else i0
-    j0 = np.floor(j_cont).astype(int)
-    j1 = j0 + 1 if j0 < img.shape[1]-1 else j0
-
-    c0 = img[i0, j0]
-    c1 = img[i0, j1]
-    c2 = img[i1, j0]
-    c3 = img[i1, j1]
-
-    t = i_cont - i0
-    s = j_cont - j0
-
-    c01 = c0*(1 - s) + c1*s
-    c23 = c2*(1 - s) + c3*s
-    c = c01*(1 - t) + c23*t
-    return c
 
 def inv_rot_matrix(theta):
     return np.array([[np.cos(theta), np.sin(theta), 0],
@@ -178,4 +140,6 @@ def inv_translation_matrix(ti, tj):
     return np.array([[1, 0, -ti],
             [0, 1, -tj],
             [0, 0, 1]])
+
+
 
