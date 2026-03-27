@@ -3,7 +3,7 @@ NOME: Leonardo Doro Demore
 NÚMERO USP: 15674786
 CÓDIGO DO CURSO: SCC0251 e SCC0651
 ANO/SEMESTRE: 2026/1
-TÍTULO: SMDC Image Editor (Simples, Mas é De Coração)
+TÍTULO: TSIE - The Simplest Image Editor
 """
 
 # Biliotecas da disciplina
@@ -17,8 +17,9 @@ from tkinter import filedialog
 from tkinter import messagebox
 from PIL import Image
 
-# ============================= Espaço para as funções: =============================
-# Funções auxiliares:
+# ============================= ESPAÇO DAS FUNÇÕES: =============================
+
+# FUNÇÕES AUXILIARES
 # Modifica o intervalo da imagem
 def norm_minmax(image_array: np.ndarray, 
                 scale_factor: float = 255, 
@@ -44,7 +45,7 @@ def is_rgba(img: np.ndarray):
 
 # -----------------------------------------------------------------------------------
 
-# Funções de I/O:
+# FUNÇÕES DE I/O
 # Carrega e trata (se necessário) a imagem escolhida
 def load_image(path: str) -> np.ndarray:
     try:
@@ -60,7 +61,7 @@ def load_image(path: str) -> np.ndarray:
 
 # Trata (se necessário) e salva a imagem escolhida
 def save_image(img: np.ndarray, path: str):
-    np.clip(img, 0, 255) # Define o intervalo correto [0,255]
+    img = np.clip(img, 0, 255) # Define o intervalo correto [0,255]
     img_to_save = img.astype(np.uint8) # Converte para o formato esperado
 
     try:
@@ -71,7 +72,7 @@ def save_image(img: np.ndarray, path: str):
 
 # -----------------------------------------------------------------------------------
 
-# Funções de transformação de intensidade
+# FUNÇÕES DE TRANSFORMAÇÃO DE INTENSIDADE
 # Inverte as intensidades da imagem (claro -> escuro) e vice-versa
 def f_inv(light):
     return 255-light
@@ -133,7 +134,8 @@ def f_solarize(light):
     return solarized.astype(np.uint8)
 
 # -----------------------------------------------------------------------------------
-# Funções de transformação geométrica
+
+# FUNÇÕES DE TRANSFORMAÇÃO GEOMÉTRICA
 # Calcula a matriz de rotação inversa
 def inv_rot_matrix(theta):
     return np.array([[np.cos(theta), np.sin(theta), 0],
@@ -159,67 +161,83 @@ def inv_central_rot_matrix(theta, width, height):
     cy = height / 2.0
     
     # Move o centro para (0,0)
-    T1_inv = inv_translation_matrix(-cx, -cy)
+    T1_inv = inv_translation_matrix(-cy, -cx)
     
     # Rotaciona 
     R_inv = inv_rot_matrix(theta)
     
     # Move de volta para a posição original (cx, cy)
-    T2_inv = inv_translation_matrix(cx, cy)
+    T2_inv = inv_translation_matrix(cy, cx)
     
     # Compõe a matriz final 
     final_matrix = T2_inv @ R_inv @ T1_inv
     
     return final_matrix
 
-# Realiza a interpolação bilinear: calcula intensidade em coordenadas fracionárias
-def interp(img, i_cont, j_cont):
+# Realiza a interpolação bilinear vetorizada: calcula intensidade em coordenadas fracionárias
+def interp(img, i_valid, j_valid):
+    # Encontra os 4 pixels vizinhos para todas as coordenadas de uma vez
+    i0 = np.floor(i_valid).astype(int)
+    i1 = i0 + 1
+    j0 = np.floor(j_valid).astype(int)
+    j1 = j0 + 1
 
-    i0 = np.floor(i_cont).astype(int) 
-    i1 = i0 + 1 if i0 < img.shape[0]-1 else i0 
-    j0 = np.floor(j_cont).astype(int) # Pixel à esquerda/cima
-    j1 = j0 + 1 if j0 < img.shape[1]-1 else j0 # Pixel à direita/baixo
-
+    # Pega as cores dessas 4 pontas
     c0 = img[i0, j0] # Topo esquerda
     c1 = img[i0, j1] # Topo direita
     c2 = img[i1, j0] # Baixo esquerda
     c3 = img[i1, j1] # Baixo direita
 
-    # Calcula as distâncias
-    t = i_cont - i0
-    s = j_cont - j0
+    # Calcula as distâncias 
+    t = i_valid - i0
+    s = j_valid - j0
 
-    c01 = c0*(1 - s) + c1*s # Interpolação na linha de cima
-    c23 = c2*(1 - s) + c3*s # Interpolação na linha de baixo
-    c = c01*(1 - t) + c23*t # Combina as duas linhas 
-    return c
+    # Se a imagem for colorida (3 canais), precisa alinhar a matriz 
+    # para a multiplicação funcionar corretamente 
+    if img.ndim == 3:
+        t = t[:, np.newaxis]
+        s = s[:, np.newaxis]
 
-# Aplica uma transformação, dependendo da matriz passada
+    # Combina as cores 
+    c01 = c0 * (1 - s) + c1 * s # Interpolação na linha de cima
+    c23 = c2 * (1 - s) + c3 * s # Interpolação na linha de baixo
+    c_final = c01 * (1 - t) + c23 * t # Combina as duas linhas 
+    
+    return c_final
+
+# Aplica a matriz de transformação usando vetorização
 def apply_geometric_transform(img, matrix):
-    # Pega a altura e largura da imagem original
     h, w = img.shape[:2]
-
-    # Cria uma imagem vazia totalmente preta
     new_img = np.zeros_like(img)
 
-    # Flag para saber se a transformação gerou pixels vazios
-    has_empty_pixels = False
+    # Cria uma grade com todas as coordenadas 
+    i_coords, j_coords = np.meshgrid(np.arange(h), np.arange(w), indexing='ij')
+
+    # Transforma as grades em um vetor 3D de coordenadas homogêneas
+    coords = np.stack([i_coords.ravel(), j_coords.ravel(), np.ones_like(i_coords).ravel()])
+
+    # Aplica a matriz de transformação de uma vez só
+    origin_coords = matrix @ coords
+
+    # Volta o resultado para o formato da imagem
+    i_orig = origin_coords[0].reshape(h, w)
+    j_orig = origin_coords[1].reshape(h, w)
+
+    # Cria uma máscara dizendo quais pixels caíram dentro da imagem original
+    valid_mask = (i_orig >= 0) & (i_orig < h - 1) & (j_orig >= 0) & (j_orig < w - 1)
     
-    # Loop para iterar por todos os pixels
-    for i in range(h):
-        for j in range(w):
-            # Transforma a posição atual em um vetor de coordenadas homogêneas
-            coords = np.array([i, j, 1])
-            # O resultado dessa multiplicação é a origem
-            origin_coords = matrix @ coords
-            i_orig, j_orig = origin_coords[0], origin_coords[1]
-            
-            # Verifica se a coordenada de origem está dentro da imagem original
-            if 0 <= i_orig < h - 1 and 0 <= j_orig < w - 1:
-                new_img[i, j] = interp(img, i_orig, j_orig)
-            else:
-                has_empty_pixels = True
-                
+    has_empty_pixels = not np.all(valid_mask)
+
+    # Extrai apenas as coordenadas válidas
+    i_valid = i_orig[valid_mask]
+    j_valid = j_orig[valid_mask]
+
+    # Chama a função auxiliar para calcular as novas cores
+    interpolated_pixels = interp(img, i_valid, j_valid)
+
+    # "Encaixa" os pixels calculados na nova imagem
+    new_img[valid_mask] = interpolated_pixels
+
     return new_img, has_empty_pixels
 
 # Calcula o zoom necessário para escalar a imagem (caso dos pixels vazios)
@@ -244,9 +262,11 @@ def calculate_auto_zoom(angle_degrees: float, width: int, height: int) -> float:
     
     return zoom_factor
 
-# ============================= Fim do espaço das funções =============================
+# ============================= FIM DO ESPAÇO DAS FUNÇÕES =============================
 
-# Classe do editor
+# ============================= ESPAÇO DA UI =============================
+
+# CLASSE DO UI
 class ImageEditor(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -305,7 +325,9 @@ class ImageEditor(ctk.CTk):
         self.sidebar = ctk.CTkFrame(self, width=250, corner_radius=0)
         self.sidebar.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
 
-        # ========== Contâiner de Intensidade ==========
+        # --------------------------------------------------------------------------------
+
+        # CONTÂINER DAS FUNÇÕES DE INTENSIDADE 
         self.intensity_container = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         self.intensity_container.pack(fill="both", expand=True)
 
@@ -417,8 +439,9 @@ class ImageEditor(ctk.CTk):
         )
         self.mod_btn.grid(row=3, column=0, columnspan=4, pady=(10, 0))
 
-        # ===============================================
-        # ========== Contâiner de Geométricas  ==========
+        # --------------------------------------------------------------------------------
+
+        # CONTÂINER DAS FUNÇÕES GEOMÉTRICAS  
         self.geometry_container = ctk.CTkFrame(self.sidebar, fg_color="transparent")
 
         # Título 
@@ -498,14 +521,14 @@ class ImageEditor(ctk.CTk):
             hover_color="#254A7A"
         )
         self.check_auto_zoom.pack(pady=5)
-        self.check_auto_zoom.select() # Já vem ativado por segurança!
+        self.check_auto_zoom.select() 
 
         self.rot_btn = self.create_button(self.frame_rot, "Aplicar Rotação", self.apply_rotation)
         self.rot_btn.pack(pady=(10, 0))
         
-        # ===============================================
+        # --------------------------------------------------------------------------------
 
-        # Área de exibição da imagem
+        # ÁREA DO CANVAS
         self.canvas = ctk.CTkLabel(
             self, 
             text="Nenhuma imagem carregada",
@@ -517,6 +540,9 @@ class ImageEditor(ctk.CTk):
         # O sticky="nsew" faz a Label ocupar 100% do espaço da linha 1 / coluna 1
         self.canvas.grid(row=1, column=1, sticky="nsew", padx=20, pady=20)
 
+    # --------------------------------------------------------------------------------
+    
+    # FUNÇÕES DOS BOTÕES DA UI
     # Controla qual sidebar aparece
     def change_sidebar_mode(self, new_mode):
         # Esconde ambos os contêineres 
@@ -529,6 +555,14 @@ class ImageEditor(ctk.CTk):
         elif new_mode == "Geométricas":
             self.geometry_container.pack(fill="both", expand=True)
 
+    # COnfirmação visual para os botões "aplicar"
+    def show_feedback(self, button, original_text, success_text):
+        # Muda para verde e altera o texto
+        button.configure(text=success_text, fg_color="#2FA572", border_color="#2FA572")
+        
+        self.after(2000, lambda: button.configure(text=original_text, fg_color="#1E3A5F", border_color="#1E3A5F"))
+
+    # Cria um botão estilizado
     def create_button(self, parent, text, command):
         return ctk.CTkButton(
             parent, 
@@ -558,6 +592,131 @@ class ImageEditor(ctk.CTk):
             # Manda a matriz para ser desenhada na tela
             self.update_canvas(self.current_image_array)
 
+    # Ajusta a imagem para lidar com pixels pretos
+    def adjust_edges(self):
+        if self.current_image_array is None: return
+        
+        h, w = self.current_image_array.shape[:2]
+        
+        # Verifica se é rotação ou translação
+        if abs(self.slider_rot.get()) > 0.1: # Lógica para rotação
+            ang = self.slider_rot.get()
+            zoom = calculate_auto_zoom(ang, w, h)
+            
+            # Aplica escala central 
+            cy, cx = h / 2.0, w / 2.0
+            T1_inv = inv_translation_matrix(-cy, -cx)
+            inv_sm = inv_scale_matrix(zoom, zoom)
+            T2_inv = inv_translation_matrix(cy, cx)
+            
+            matriz_final = T2_inv @ inv_sm @ T1_inv
+            
+            # Aplica feedback 
+            feedback_btn = self.rot_btn
+            feedback_txt = "Aplicar Rotação"
+            
+        else: # Lógica para translação
+            try:
+                tx_final = abs(float(self.entry_dx.get()))
+                ty_final = abs(float(self.entry_dy.get()))
+            except ValueError:
+                return # Segurança caso as caixas estejam vazias
+
+            # Calcula a nova largura e altura visíveis 
+            visible_w = w - tx_final
+            visible_h = h - ty_final
+            
+            # Se a translação moveu toda a imagem da tela
+            if visible_w <= 0 or visible_h <= 0: 
+                messagebox.showwarning("Aviso", "A imagem foi totalmente movida para fora da área visível!\nUse o botão 'Desfazer'.")
+                return
+
+            # Calcula os fatores de escala (Zoom) 
+            sx = w / visible_w
+            sy = h / visible_h
+            
+            if sx == 0 or sy == 0: return
+
+            # Escala pelo centro 
+            inv_smatrix = inv_scale_matrix(sy, sx)
+            
+            cy, cx = h / 2.0, w / 2.0
+            T1_inv = inv_translation_matrix(-cy, -cx)
+            T2_inv = inv_translation_matrix(cy, cx)
+
+            # Combina as matrizes (Matriz de Escala no Centro)
+            matriz_final = T2_inv @ inv_smatrix @ T1_inv
+            
+            feedback_btn = self.trans_btn
+            feedback_txt = "Aplicar Translação"
+
+        # Aplicação e Feedback 
+        adjusted, _ = apply_geometric_transform(self.current_image_array, matriz_final)
+        
+        # Atualiza o estado e a tela
+        self.current_image_array = adjusted
+        self.update_canvas(self.current_image_array)
+        
+        # COnfirmação visual
+        self.show_feedback(feedback_btn, feedback_txt, "Ajustado!")
+
+        self.slider_rot.set(0)
+        self.lbl_rot_val.configure(text="Ângulo: 0°")
+
+    # Se há pixels pretos, aparece uma mensagem e resolve o "problema"
+    def solve_empty_pixels(self):
+        # Cria uma mini-janela (TopLevel)
+        warning = ctk.CTkToplevel(self)
+        warning.title("Atenção")
+        warning.geometry("350x150")
+        warning.resizable(False, False)
+        
+        # Faz o pop-up ficar sempre na frente e trava a janela principal
+        warning.transient(self)
+        warning.grab_set()
+        
+        # Centraliza o pop-up na tela
+        warning.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() // 2) - (350 // 2)
+        y = self.winfo_y() + (self.winfo_height() // 2) - (150 // 2)
+        warning.geometry(f"+{x}+{y}")
+
+        # Mensagem
+        lbl_msg = ctk.CTkLabel(
+            warning, 
+            text="A transformação gerou bordas vazias (pretas)!\nO que você deseja fazer?",
+            font=ctk.CTkFont(size=14)
+        )
+        lbl_msg.pack(pady=(20, 20))
+
+        # Frame para organizar os botões lado a lado
+        frame_botoes = ctk.CTkFrame(warning, fg_color="transparent")
+        frame_botoes.pack(fill="x", padx=20)
+
+        def undo():
+            # Restaura o backup
+            if hasattr(self, 'backup_image_array'):
+                self.current_image_array = self.backup_image_array
+                self.update_canvas(self.current_image_array)
+            warning.destroy() # Fecha o pop-up
+
+        def adjust():
+            self.adjust_edges()
+            warning.destroy()
+
+        # Botões
+        undo_btn = ctk.CTkButton(
+            frame_botoes, text="Desfazer", command=undo,
+            fg_color="#8B0000", hover_color="#A52A2A" 
+        )
+        undo_btn.pack(side="left", padx=10, expand=True)
+
+        adjust_btn = ctk.CTkButton(
+            frame_botoes, text="Ajustar", command=adjust,
+            fg_color="#2FA572", hover_color="#3cb371" 
+        )
+        adjust_btn.pack(side="right", padx=10, expand=True)
+
     # Mostra a imagem na tela de forma interativa
     def update_canvas(self, img_array):
         # Converte np.array para PIL Image
@@ -573,9 +732,10 @@ class ImageEditor(ctk.CTk):
         self.canvas.configure(image=ctk_image, text="") 
         self.canvas.image = ctk_image 
 
+    # Aplica inversão
     def apply_inv(self):
         if self.current_image_array is None:
-            print("Aviso: Por favor, carregue uma imagem primeiro!")
+            messagebox.showwarning("Aviso", "Por favor, carregue uma imagem primeiro!")
             return
 
         # Aplica a inversão
@@ -587,9 +747,10 @@ class ImageEditor(ctk.CTk):
         # Manda a nova matriz para ser desenhada na interface
         self.update_canvas(self.current_image_array)
 
+    # Aplica logarítmica
     def apply_log(self):
         if self.current_image_array is None:
-            print("Aviso: Por favor, carregue uma imagem primeiro!")
+            messagebox.showwarning("Aviso", "Por favor, carregue uma imagem primeiro!")
             return
 
         # Aplica a logarítmica
@@ -604,7 +765,7 @@ class ImageEditor(ctk.CTk):
     # Essa função é um pouco diferente: aplica o preview (em tempo real)
     def apply_gamma(self, gamma_value):
         # Atualiza o texto da Label 
-        self.lbl_gamma.configure(text=f"Gamma: {gamma_value:.2f}")
+        self.gamma_lbl.configure(text=f"Gamma: {gamma_value:.2f}")
         
         if self.current_image_array is None:
             return # sem print para não poluir o terminal
@@ -617,6 +778,7 @@ class ImageEditor(ctk.CTk):
     # Essa função complementa a função acima: confirma as mudanças
     def confirm_gamma(self):
         if self.current_image_array is None:
+            messagebox.showwarning("Aviso", "Por favor, carregue uma imagem primeiro!")
             return
 
         valor_g = self.slider_gamma.get()
@@ -627,17 +789,20 @@ class ImageEditor(ctk.CTk):
 
         # Reseta o slider e o texto para o estado neutro
         self.slider_gamma.set(1.0)
-        self.lbl_gamma.configure(text="Gamma: 1.00")
+        self.gamma_lbl.configure(text="Gamma: 1.00")
 
         # Atualiza o canvas por segurança 
         self.update_canvas(self.current_image_array)
+        
+        # Feedback no botão de confirmar 
+        self.show_feedback(self.confirm_gamma_btn, "Aplicar gamma", "Gamma aplicado!")
 
+    # Aplica solarização
     def apply_solar (self):
         if self.current_image_array is None:
-            print("Aviso: Por favor, carregue uma imagem primeiro!")
+            messagebox.showwarning("Aviso", "Por favor, carregue uma imagem primeiro!")
             return
 
-        # Aplica a inversão
         proc_img = f_solarize(self.current_image_array)
 
         # Substitui a imagem atual pela processada
@@ -646,9 +811,10 @@ class ImageEditor(ctk.CTk):
         # Manda a nova matriz para ser desenhada na interface
         self.update_canvas(self.current_image_array)
 
+    # Aplica modulação de contraste
     def apply_mod(self):
         if self.current_image_array is None:
-            print("Aviso: Por favor, carregue uma imagem primeiro!")
+            messagebox.showwarning("Aviso", "Por favor, carregue uma imagem primeiro!")
             return
 
         try:
@@ -671,74 +837,156 @@ class ImageEditor(ctk.CTk):
             
             # Manda a nova matriz para ser desenhada na interface
             self.update_canvas(self.current_image_array)
+
+            # Feedback visual no botão de modulação
+            self.show_feedback(self.mod_btn, "Aplicar modulação", "Modulação aplicada!")
+
+            # Reseta as caixas de texto para os valores originais
+            self.entry_in_min.delete(0, 'end')
+            self.entry_in_min.insert(0, "0")
+            
+            self.entry_in_max.delete(0, 'end')
+            self.entry_in_max.insert(0, "255")
+            
+            self.entry_out_min.delete(0, 'end')
+            self.entry_out_min.insert(0, "0")
+            
+            self.entry_out_max.delete(0, 'end')
+            self.entry_out_max.insert(0, "255")
             
         except ValueError:
-            print("Erro: Por favor, digite apenas números válidos nas caixas de modulação")
+            messagebox.showerror("Erro de Digitação", "Por favor, insira apenas números válidos nas caixas de texto.")
 
+    # Atualiza o texto do slider da rotação
     def update_rot_label(self, value):
-        """Atualiza o texto em tempo real enquanto o usuário arrasta o slider."""
         self.lbl_rot_val.configure(text=f"Ângulo: {int(value)}°")
 
+    # Aplica translação
     def apply_translation(self):
-        if self.current_image_array is None: return
+        if self.current_image_array is None: 
+            messagebox.showwarning("Aviso", "Por favor, carregue uma imagem primeiro!")
+            return
+            
         try:
             tx = float(self.entry_dx.get())
             ty = float(self.entry_dy.get())
             
-            # Gera a matriz e aplica
-            matriz = inv_translation_matrix(tx, ty)
-            img_processada, vazios = apply_geometric_transform(self.current_image_array, matriz)
+            # Salva o backup
+            self.backup_image_array = self.current_image_array.copy()
             
-            self.current_image_array = img_processada
+            # Gera a matriz e aplica
+            matrix = inv_translation_matrix(ty, tx)
+            proc_img, empty = apply_geometric_transform(self.current_image_array, matrix)
+            
+            # Atualiza a tela
+            self.current_image_array = proc_img
             self.update_canvas(self.current_image_array)
             
-            if vazios: messagebox.showwarning("Aviso", "A translação gerou pixels vazios nas bordas!")
+            # Verifica se gerou bordas vazias
+            if empty: 
+                self.solve_empty_pixels()
+            else:
+                # Feedback visual 
+                self.show_feedback(self.trans_btn, "Aplicar Translação", "Aplicado!")
+                
+                # Reseta a caixa do Eixo X
+                self.entry_dx.delete(0, 'end')
+                self.entry_dx.insert(0, "0")
+                
+                # Reseta a caixa do Eixo Y
+                self.entry_dy.delete(0, 'end')
+                self.entry_dy.insert(0, "0")
+                
         except ValueError:
-            print("Digite valores numéricos válidos.")
+            messagebox.showerror("Erro de Digitação", "Por favor, insira apenas números válidos.")
 
+    # Aplica escala
     def apply_scale(self):
-        if self.current_image_array is None: return
+        if self.current_image_array is None: 
+            messagebox.showwarning("Aviso", "Por favor, carregue uma imagem primeiro!")
+            return
+            
         try:
             sx = float(self.entry_sx.get())
             sy = float(self.entry_sy.get())
-            if sx == 0 or sy == 0: return # Evita divisão por zero
             
-            matriz = inv_scale_matrix(sx, sy)
-            img_processada, vazios = apply_geometric_transform(self.current_image_array, matriz)
+            # Prevenção contra divisão por zero
+            if sx == 0 or sy == 0: 
+                messagebox.showerror("Erro", "O fator de escala não pode ser zero!")
+                return
             
-            self.current_image_array = img_processada
+            # Salva o backup
+            self.backup_image_array = self.current_image_array.copy()
+            
+            # Gera a matriz e aplica 
+            matrix = inv_scale_matrix(sy, sx)
+            proc_img, empty = apply_geometric_transform(self.current_image_array, matrix)
+            
+            # Atualiza a tela
+            self.current_image_array = proc_img
             self.update_canvas(self.current_image_array)
             
-            if vazios: messagebox.showwarning("Aviso", "O distanciamento gerou pixels vazios nas bordas!")
+            # Verifica se gerou bordas vazias 
+            if empty: 
+                self.solve_empty_pixels()
+            else:
+                # Feedback visual 
+                self.show_feedback(self.scale_btn, "Aplicar Escala", "✓ Aplicado!")
+                
+                # Reseta a caixa do Fator X para 
+                self.entry_sx.delete(0, 'end')
+                self.entry_sx.insert(0, "1.0")
+                
+                # Reseta a caixa do Fator Y para 
+                self.entry_sy.delete(0, 'end')
+                self.entry_sy.insert(0, "1.0")
+                
         except ValueError:
-            print("Digite valores numéricos válidos.")
+            messagebox.showerror("Erro de Digitação", "Por favor, insira apenas números válidos.")
 
+    # Aplica rotação
     def apply_rotation(self):
-        if self.current_image_array is None: return
+        if self.current_image_array is None: 
+            messagebox.showwarning("Aviso", "Por favor, carregue uma imagem primeiro!")
+            return
         
-        angulo = self.slider_rot.get()
-        theta = np.deg2rad(angulo)
+        ang = self.slider_rot.get()
+        theta = np.deg2rad(ang)
         h, w = self.current_image_array.shape[:2]
         
-        # 1. Gera a matriz de Rotação Central (que nós fizemos lá no começo!)
-        matriz_rot = inv_central_rot_matrix(theta, w, h)
+        # Salva o backup
+        self.backup_image_array = self.current_image_array.copy()
         
-        # 2. Verifica se a Checkbox do Auto-Zoom está marcada
+        # Gera a matriz de Rotação Central 
+        cx = w / 2.0
+        cy = h / 2.0
+        T1_inv = inv_translation_matrix(-cy, -cx)
+        R_inv = inv_rot_matrix(theta)
+        T2_inv = inv_translation_matrix(cy, cx)
+        matriz_rot = T2_inv @ R_inv @ T1_inv
+        
+        # Se a Checkbox do Auto-Zoom estiver marcada, combina as matrizes
         if self.check_auto_zoom.get() == 1:
-            zoom = calculate_auto_zoom(angulo, w, h)
-            # Como a escala também ocorre pelo centro, precisamos combinar as matrizes.
-            # (Faremos essa combinação no próximo passo se você quiser integrar 100% o zoom!)
-            pass 
+            zoom = calculate_auto_zoom(ang, w, h)
+            inv_scale_m = inv_scale_matrix(zoom, zoom)
+            matriz_rot = T2_inv @ inv_scale_m @ R_inv @ T1_inv # Escala no centro antes de girar de volta
             
-        img_processada, vazios = apply_geometric_transform(self.current_image_array, matriz_rot)
-        self.current_image_array = img_processada
+        # Aplica a transformação
+        proc_img, empty = apply_geometric_transform(self.current_image_array, matriz_rot)
+        self.current_image_array = proc_img
         self.update_canvas(self.current_image_array)
         
-        # Se gerou pixel vazio e o usuário desmarcou a caixa de segurança:
-        if vazios and self.check_auto_zoom.get() == 0:
-            messagebox.showwarning("Aviso de Requisito", "Pixels vazios detectados!\nAtive a caixa 'Auto-Zoom' para evitar isso.")
+        # Se gerou pixel vazio e o usuário não marcou a caixa de segurança:
+        if empty and self.check_auto_zoom.get() == 0:
+            self.solve_empty_pixels()
+        else:
+            self.show_feedback(self.rot_btn, "Aplicar Rotação", "Aplicado!")
+            self.slider_rot.set(0)
+            self.lbl_rot_val.configure(text="Ângulo: 0°")
+    
+    # ============================= FIM DO ESPAÇO DA UI =============================
 
-# Execução
+# Main
 if __name__ == "__main__":
     app = ImageEditor()
     app.mainloop()
