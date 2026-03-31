@@ -63,12 +63,8 @@ def load_image(path: str) -> np.ndarray:
 def save_image(img: np.ndarray, path: str):
     img = np.clip(img, 0, 255) # Define o intervalo correto [0,255]
     img_to_save = img.astype(np.uint8) # Converte para o formato esperado
-
-    try:
-        iio.imwrite(path, img_to_save)
-        print(f"Imagem salva com sucesso!\nImagem salva em: {path}")
-    except Exception as e:
-        print(f"Erro ao salvar a imagem: {e}")
+    
+    iio.imwrite(path, img_to_save)
 
 # -----------------------------------------------------------------------------------
 
@@ -226,7 +222,11 @@ def apply_geometric_transform(img, matrix):
     # Cria uma máscara dizendo quais pixels caíram dentro da imagem original
     valid_mask = (i_orig >= 0) & (i_orig < h - 1) & (j_orig >= 0) & (j_orig < w - 1)
     
-    has_empty_pixels = not np.all(valid_mask)
+    i_rounded = np.round(i_orig, 3)
+    j_rounded = np.round(j_orig, 3)
+    alarm_mask = (i_rounded >= 0) & (i_rounded <= h - 1) & (j_rounded >= 0) & (j_rounded <= w - 1)
+    
+    has_empty_pixels = not np.all(alarm_mask)
 
     # Extrai apenas as coordenadas válidas
     i_valid = i_orig[valid_mask]
@@ -242,22 +242,17 @@ def apply_geometric_transform(img, matrix):
 
 # Calcula o zoom necessário para escalar a imagem (caso dos pixels vazios)
 def calculate_auto_zoom(angle_degrees: float, width: int, height: int) -> float:
-    # Converte ângulo para radianos (garantindo 0 < angle < 90)
     angle_rad = np.abs(np.deg2rad(angle_degrees))
     
-    # Seno e Cosseno do ângulo
-    s = np.sin(angle_rad)
-    c = np.cos(angle_rad)
+    s = np.abs(np.sin(angle_rad))
+    c = np.abs(np.cos(angle_rad))
     
-    # Calcula as novas dimensões teóricas (com cantos pretos)
     new_w = (height * s) + (width * c)
     new_h = (height * c) + (width * s)
     
-    # Calcula o fator de escala (Zoom)
     scale_w = new_w / width
     scale_h = new_h / height
     
-    # O maior fator garante que toda a área visível seja preenchida
     zoom_factor = max(scale_w, scale_h)
     
     return zoom_factor
@@ -317,9 +312,17 @@ class ImageEditor(ctk.CTk):
         )
         self.title_lbl.grid(row=0, column=1, sticky="e", pady=15)
         
-        # Botão de carregar imagem na coluna direita
-        self.load_btn = self.create_button(self.topbar, "Carregar Imagem", self.open_image_dialog)
-        self.load_btn.grid(row=0, column=2, sticky="e", padx=20, pady=10)
+        # Frame para agrupar os botões de ação na coluna direita
+        self.action_frame = ctk.CTkFrame(self.topbar, fg_color="transparent")
+        self.action_frame.grid(row=0, column=2, sticky="e", padx=20, pady=10)
+        
+        # Botão de carregar 
+        self.load_btn = self.create_button(self.action_frame, "Carregar Imagem", self.open_image_dialog)
+        self.load_btn.pack(side="left", padx=(0, 10))
+        
+        # Botão de salvar
+        self.save_btn = self.create_button(self.action_frame, "Salvar Imagem", self.save_image_dialog)
+        self.save_btn.pack(side="left")
         
         # --- SideBar ---
         self.sidebar = ctk.CTkFrame(self, width=250, corner_radius=0)
@@ -328,7 +331,7 @@ class ImageEditor(ctk.CTk):
         # --------------------------------------------------------------------------------
 
         # CONTÂINER DAS FUNÇÕES DE INTENSIDADE 
-        self.intensity_container = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        self.intensity_container = ctk.CTkScrollableFrame(self.sidebar, fg_color="transparent")
         self.intensity_container.pack(fill="both", expand=True)
 
         self.intensity_frame = ctk.CTkFrame(self.intensity_container, fg_color="transparent")
@@ -392,38 +395,41 @@ class ImageEditor(ctk.CTk):
         self.frame_mod = ctk.CTkFrame(self.intensity_container, fg_color="transparent")
         self.frame_mod.pack(pady=10, padx=10, fill="x", expand=True)
         
+        self.frame_mod.grid_columnconfigure(0, weight=1)
+        self.frame_mod.grid_columnconfigure(1, weight=1)
+
+        # Título
         self.lbl_mod = ctk.CTkLabel(self.frame_mod, text="Modulação de Contraste", font=ctk.CTkFont(size=12, weight="bold"))
-        self.lbl_mod.grid(row=0, column=0, columnspan=4, pady=(0, 5))
+        self.lbl_mod.grid(row=0, column=0, columnspan=2, pady=(0, 10))
 
         self.lbl_in_min = ctk.CTkLabel(self.frame_mod, text="In Mín:")
-        self.lbl_in_min.grid(row=1, column=0, padx=2, sticky="e")
+        self.lbl_in_min.grid(row=1, column=0)
         
-        self.entry_in_min = ctk.CTkEntry(self.frame_mod, width=45, height=25)
-        self.entry_in_min.grid(row=1, column=1, padx=2)
+        self.lbl_in_max = ctk.CTkLabel(self.frame_mod, text="In Máx:")
+        self.lbl_in_max.grid(row=1, column=1)
+
+        self.entry_in_min = ctk.CTkEntry(self.frame_mod, width=60, height=25)
+        self.entry_in_min.grid(row=2, column=0, pady=(0, 10))
         self.entry_in_min.insert(0, "0")
 
-        self.lbl_in_max = ctk.CTkLabel(self.frame_mod, text="In Máx:")
-        self.lbl_in_max.grid(row=1, column=2, padx=2, sticky="e")
-        
-        self.entry_in_max = ctk.CTkEntry(self.frame_mod, width=45, height=25)
-        self.entry_in_max.grid(row=1, column=3, padx=2)
+        self.entry_in_max = ctk.CTkEntry(self.frame_mod, width=60, height=25)
+        self.entry_in_max.grid(row=2, column=1, pady=(0, 10))
         self.entry_in_max.insert(0, "255")
 
         self.lbl_out_min = ctk.CTkLabel(self.frame_mod, text="Out Mín:")
-        self.lbl_out_min.grid(row=2, column=0, padx=2, pady=5, sticky="e")
+        self.lbl_out_min.grid(row=3, column=0)
         
-        self.entry_out_min = ctk.CTkEntry(self.frame_mod, width=45, height=25)
-        self.entry_out_min.grid(row=2, column=1, padx=2, pady=5)
+        self.lbl_out_max = ctk.CTkLabel(self.frame_mod, text="Out Máx:")
+        self.lbl_out_max.grid(row=3, column=1)
+
+        self.entry_out_min = ctk.CTkEntry(self.frame_mod, width=60, height=25)
+        self.entry_out_min.grid(row=4, column=0, pady=(0, 15))
         self.entry_out_min.insert(0, "0")
 
-        self.lbl_out_max = ctk.CTkLabel(self.frame_mod, text="Out Máx:")
-        self.lbl_out_max.grid(row=2, column=2, padx=2, pady=5, sticky="e")
-        
-        self.entry_out_max = ctk.CTkEntry(self.frame_mod, width=45, height=25)
-        self.entry_out_max.grid(row=2, column=3, padx=2, pady=5)
+        self.entry_out_max = ctk.CTkEntry(self.frame_mod, width=60, height=25)
+        self.entry_out_max.grid(row=4, column=1, pady=(0, 15))
         self.entry_out_max.insert(0, "255")
 
-        # Botão para aplicar
         self.mod_btn = ctk.CTkButton(
             self.frame_mod,
             text="Aplicar modulação",
@@ -437,12 +443,12 @@ class ImageEditor(ctk.CTk):
             font=ctk.CTkFont(family="Inter", size=16, weight="normal"),
             command=self.apply_mod
         )
-        self.mod_btn.grid(row=3, column=0, columnspan=4, pady=(10, 0))
+        self.mod_btn.grid(row=5, column=0, columnspan=2)
 
         # --------------------------------------------------------------------------------
 
-        # CONTÂINER DAS FUNÇÕES GEOMÉTRICAS  
-        self.geometry_container = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        # CONTÂINER DAS FUNÇÕES GEOMÉTRICAS   
+        self.geometry_container = ctk.CTkScrollableFrame(self.sidebar, fg_color="transparent")
 
         # Título 
         self.geom_lbl = ctk.CTkLabel(
@@ -456,45 +462,55 @@ class ImageEditor(ctk.CTk):
         self.frame_trans = ctk.CTkFrame(self.geometry_container, fg_color="transparent")
         self.frame_trans.pack(pady=10, padx=10, fill="x")
 
+        self.frame_trans.grid_columnconfigure(0, weight=1)
+        self.frame_trans.grid_columnconfigure(1, weight=1)
+
         self.lbl_trans = ctk.CTkLabel(self.frame_trans, text="Translação (Pixels)", font=ctk.CTkFont(family="Inter", size=14, weight="bold"))
-        self.lbl_trans.grid(row=0, column=0, columnspan=4, pady=(0, 5))
+        self.lbl_trans.grid(row=0, column=0, columnspan=2, pady=(0, 10))
 
         self.lbl_dx = ctk.CTkLabel(self.frame_trans, text="Eixo X:")
-        self.lbl_dx.grid(row=1, column=0, padx=2, sticky="e")
-        self.entry_dx = ctk.CTkEntry(self.frame_trans, width=50, height=25)
-        self.entry_dx.grid(row=1, column=1, padx=2)
+        self.lbl_dx.grid(row=1, column=0)
+        
+        self.lbl_dy = ctk.CTkLabel(self.frame_trans, text="Eixo Y:")
+        self.lbl_dy.grid(row=1, column=1)
+
+        self.entry_dx = ctk.CTkEntry(self.frame_trans, width=60, height=25)
+        self.entry_dx.grid(row=2, column=0, pady=(0, 15))
         self.entry_dx.insert(0, "0")
 
-        self.lbl_dy = ctk.CTkLabel(self.frame_trans, text="Eixo Y:")
-        self.lbl_dy.grid(row=1, column=2, padx=2, sticky="e")
-        self.entry_dy = ctk.CTkEntry(self.frame_trans, width=50, height=25)
-        self.entry_dy.grid(row=1, column=3, padx=2)
+        self.entry_dy = ctk.CTkEntry(self.frame_trans, width=60, height=25)
+        self.entry_dy.grid(row=2, column=1, pady=(0, 15))
         self.entry_dy.insert(0, "0")
 
         self.trans_btn = self.create_button(self.frame_trans, "Aplicar Translação", self.apply_translation)
-        self.trans_btn.grid(row=2, column=0, columnspan=4, pady=(10, 0))
+        self.trans_btn.grid(row=3, column=0, columnspan=2)
 
         # Escala
         self.frame_scale = ctk.CTkFrame(self.geometry_container, fg_color="transparent")
         self.frame_scale.pack(pady=10, padx=10, fill="x")
 
+        self.frame_scale.grid_columnconfigure(0, weight=1)
+        self.frame_scale.grid_columnconfigure(1, weight=1)
+
         self.lbl_scale = ctk.CTkLabel(self.frame_scale, text="Escala (Multiplicador)", font=ctk.CTkFont(family="Inter", size=14, weight="bold"))
-        self.lbl_scale.grid(row=0, column=0, columnspan=4, pady=(0, 5))
+        self.lbl_scale.grid(row=0, column=0, columnspan=2, pady=(0, 10))
 
         self.lbl_sx = ctk.CTkLabel(self.frame_scale, text="Fator X:")
-        self.lbl_sx.grid(row=1, column=0, padx=2, sticky="e")
-        self.entry_sx = ctk.CTkEntry(self.frame_scale, width=50, height=25)
-        self.entry_sx.grid(row=1, column=1, padx=2)
+        self.lbl_sx.grid(row=1, column=0)
+        
+        self.lbl_sy = ctk.CTkLabel(self.frame_scale, text="Fator Y:")
+        self.lbl_sy.grid(row=1, column=1)
+
+        self.entry_sx = ctk.CTkEntry(self.frame_scale, width=60, height=25)
+        self.entry_sx.grid(row=2, column=0, pady=(0, 15))
         self.entry_sx.insert(0, "1.0")
 
-        self.lbl_sy = ctk.CTkLabel(self.frame_scale, text="Fator Y:")
-        self.lbl_sy.grid(row=1, column=2, padx=2, sticky="e")
-        self.entry_sy = ctk.CTkEntry(self.frame_scale, width=50, height=25)
-        self.entry_sy.grid(row=1, column=3, padx=2)
+        self.entry_sy = ctk.CTkEntry(self.frame_scale, width=60, height=25)
+        self.entry_sy.grid(row=2, column=1, pady=(0, 15))
         self.entry_sy.insert(0, "1.0")
 
         self.scale_btn = self.create_button(self.frame_scale, "Aplicar Escala", self.apply_scale)
-        self.scale_btn.grid(row=2, column=0, columnspan=4, pady=(10, 0))
+        self.scale_btn.grid(row=3, column=0, columnspan=2)
 
         # Rotação
         self.frame_rot = ctk.CTkFrame(self.geometry_container, fg_color="transparent")
@@ -592,72 +608,101 @@ class ImageEditor(ctk.CTk):
             # Manda a matriz para ser desenhada na tela
             self.update_canvas(self.current_image_array)
 
+    # Salva a imagem 
+    def save_image_dialog(self):
+        if self.current_image_array is None:
+            messagebox.showwarning("Aviso", "Não há nenhuma imagem para salvar!")
+            return
+            
+        # Variável para rastrear qual opção a pessoa escolheu no menu inferior
+        tipo_escolhido = ctk.StringVar(value="PNG")
+        
+        # Removemos o defaultextension e adicionamos a typevariable
+        file_path = filedialog.asksaveasfilename(
+            title="Salvar imagem como",
+            typevariable=tipo_escolhido,
+            filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg")]
+        )
+        
+        if file_path:
+            if not "." in file_path:
+                if "JPEG" in tipo_escolhido.get():
+                    file_path += ".jpg"
+                else:
+                    file_path += ".png"
+                    
+            try:
+                save_image(self.current_image_array, file_path)
+
+                messagebox.showinfo("Sucesso", "Sua imagem foi salva com sucesso!")
+                
+            except Exception as e:
+                messagebox.showerror("Erro ao Salvar", f"Ocorreu um problema ao salvar a imagem:\n{e}")
+
     # Ajusta a imagem para lidar com pixels pretos
     def adjust_edges(self):
         if self.current_image_array is None: return
         
-        h, w = self.current_image_array.shape[:2]
+        if not hasattr(self, 'backup_image_array'): return
+        
+        h, w = self.backup_image_array.shape[:2]
         
         # Verifica se é rotação ou translação
-        if abs(self.slider_rot.get()) > 0.1: # Lógica para rotação
+        if abs(self.slider_rot.get()) > 0.1: 
             ang = self.slider_rot.get()
+            theta = np.deg2rad(ang)
             zoom = calculate_auto_zoom(ang, w, h)
             
-            # Aplica escala central 
+            # Recria a matriz combinada 
             cy, cx = h / 2.0, w / 2.0
-            T1_inv = inv_translation_matrix(-cy, -cx)
+            T1_inv = inv_translation_matrix(cy, cx)  
+            R_inv = inv_rot_matrix(theta)
             inv_sm = inv_scale_matrix(zoom, zoom)
-            T2_inv = inv_translation_matrix(cy, cx)
+            T2_inv = inv_translation_matrix(-cy, -cx) 
             
-            matriz_final = T2_inv @ inv_sm @ T1_inv
+            # Escala no centro antes de girar de volta
+            matriz_final = T2_inv @ inv_sm @ R_inv @ T1_inv
             
-            # Aplica feedback 
             feedback_btn = self.rot_btn
             feedback_txt = "Aplicar Rotação"
             
-        else: # Lógica para translação
+        else: 
             try:
-                tx_final = abs(float(self.entry_dx.get()))
-                ty_final = abs(float(self.entry_dy.get()))
+                tx = float(self.entry_dx.get())
+                ty = float(self.entry_dy.get())
+                tx_abs = abs(tx)
+                ty_abs = abs(ty)
             except ValueError:
-                return # Segurança caso as caixas estejam vazias
+                return 
 
-            # Calcula a nova largura e altura visíveis 
-            visible_w = w - tx_final
-            visible_h = h - ty_final
-            
-            # Se a translação moveu toda a imagem da tela
-            if visible_w <= 0 or visible_h <= 0: 
-                messagebox.showwarning("Aviso", "A imagem foi totalmente movida para fora da área visível!\nUse o botão 'Desfazer'.")
-                return
-
-            # Calcula os fatores de escala (Zoom) 
-            sx = w / visible_w
-            sy = h / visible_h
+            sx = (w + 2 * tx_abs) / w
+            sy = (h + 2 * ty_abs) / h
             
             if sx == 0 or sy == 0: return
 
-            # Escala pelo centro 
-            inv_smatrix = inv_scale_matrix(sy, sx)
-            
-            cy, cx = h / 2.0, w / 2.0
-            T1_inv = inv_translation_matrix(-cy, -cx)
-            T2_inv = inv_translation_matrix(cy, cx)
+            # Matriz de Translação Inversa original
+            inv_trans = inv_translation_matrix(ty, tx)
 
-            # Combina as matrizes (Matriz de Escala no Centro)
-            matriz_final = T2_inv @ inv_smatrix @ T1_inv
+            # Matriz de Escala Central Inversa
+            inv_smatrix = inv_scale_matrix(sy, sx)
+            cy, cx = h / 2.0, w / 2.0
+            T1_inv = inv_translation_matrix(cy, cx)   
+            T2_inv = inv_translation_matrix(-cy, -cx) 
+            inv_center_scale = T2_inv @ inv_smatrix @ T1_inv
+
+            # Combina as matrizes (Escala Central -> Translação)
+            matriz_final = inv_center_scale @ inv_trans
             
             feedback_btn = self.trans_btn
             feedback_txt = "Aplicar Translação"
 
-        # Aplicação e Feedback 
-        adjusted, _ = apply_geometric_transform(self.current_image_array, matriz_final)
+        adjusted, _ = apply_geometric_transform(self.backup_image_array, matriz_final)
         
         # Atualiza o estado e a tela
         self.current_image_array = adjusted
         self.update_canvas(self.current_image_array)
         
-        # COnfirmação visual
+        # Confirmação visual
         self.show_feedback(feedback_btn, feedback_txt, "Ajustado!")
 
         self.slider_rot.set(0)
@@ -889,13 +934,13 @@ class ImageEditor(ctk.CTk):
                 # Feedback visual 
                 self.show_feedback(self.trans_btn, "Aplicar Translação", "Aplicado!")
                 
-                # Reseta a caixa do Eixo X
-                self.entry_dx.delete(0, 'end')
-                self.entry_dx.insert(0, "0")
-                
-                # Reseta a caixa do Eixo Y
-                self.entry_dy.delete(0, 'end')
-                self.entry_dy.insert(0, "0")
+            # Reseta a caixa do Eixo X
+            self.entry_dx.delete(0, 'end')
+            self.entry_dx.insert(0, "0")
+            
+            # Reseta a caixa do Eixo Y
+            self.entry_dy.delete(0, 'end')
+            self.entry_dy.insert(0, "0")
                 
         except ValueError:
             messagebox.showerror("Erro de Digitação", "Por favor, insira apenas números válidos.")
@@ -960,14 +1005,19 @@ class ImageEditor(ctk.CTk):
         # Gera a matriz de Rotação Central 
         cx = w / 2.0
         cy = h / 2.0
-        T1_inv = inv_translation_matrix(-cy, -cx)
+        
+        T1_inv = inv_translation_matrix(cy, cx)
         R_inv = inv_rot_matrix(theta)
-        T2_inv = inv_translation_matrix(cy, cx)
+        T2_inv = inv_translation_matrix(-cy, -cx)
         matriz_rot = T2_inv @ R_inv @ T1_inv
         
         # Se a Checkbox do Auto-Zoom estiver marcada, combina as matrizes
         if self.check_auto_zoom.get() == 1:
             zoom = calculate_auto_zoom(ang, w, h)
+            
+            # Impede erros de arredondamento
+            zoom = zoom * 1.02 
+            
             inv_scale_m = inv_scale_matrix(zoom, zoom)
             matriz_rot = T2_inv @ inv_scale_m @ R_inv @ T1_inv # Escala no centro antes de girar de volta
             
